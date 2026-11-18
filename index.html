@@ -98,6 +98,8 @@ h1 .l1{color:var(--pink)} h1 .l2{color:var(--orange)} h1 .l3{color:var(--yellow)
 .dots i{width:12px;height:12px;border-radius:50%;background:#e4dcff;transition:all .25s}
 .dots i.done{background:var(--teal)}
 .dots i.cur{background:var(--pink);transform:scale(1.3)}
+.pbar{display:block;width:90px;height:10px;border-radius:99px;background:#e4dcff;overflow:hidden}
+.pbar b{display:block;height:100%;background:linear-gradient(90deg,var(--teal),var(--pink));border-radius:99px;transition:width .3s}
 .stage{flex:1;min-height:0;position:relative;margin:0 12px;border-radius:28px;
   background:#fffdf8 radial-gradient(#e9e1ff 1.5px,transparent 1.7px) 0 0/22px 22px;box-shadow:inset 0 0 0 3px #f0eaff}
 #cv{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:grab;border-radius:28px}
@@ -111,6 +113,7 @@ h1 .l1{color:var(--pink)} h1 .l2{color:var(--orange)} h1 .l3{color:var(--yellow)
 .chip-type{font-size:14px;font-weight:600;padding:3px 10px;border-radius:99px;color:#fff;background:var(--valley);display:inline-flex;align-items:center;gap:6px}
 .chip-type.mountain{background:var(--mountain)}
 .chip-type.turn{background:var(--turn)}
+.chip-type.special{background:linear-gradient(135deg,#ff5d8f,#8a5cff)}
 .chip-type svg{display:block}
 .chip-top{font-size:13px;font-weight:600;padding:3px 10px;border-radius:99px;background:#fff1c7;color:#9a6a00}
 .say{font-size:clamp(18px,3.2vw,23px);font-weight:500;margin:8px 0 2px;line-height:1.35}
@@ -395,17 +398,6 @@ function proj(v, p){
   const f=DCAM/Math.max(0.6, DCAM - z2);
   return [v.W/2 + x1*f*v.s + v.ox, v.H/2 + y2*f*v.s + v.oy, f];
 }
-// item = { pc, T (flat 2D map), fold?:{P,n,c,s,dir}, turn?:{cx,c,s}, z }
-function world3(it, p){
-  let q = ap(it.T, p), z = it.z || 0;
-  if (it.fold){
-    const f = it.fold, b = (q[0]-f.P[0])*f.n[0] + (q[1]-f.P[1])*f.n[1], k = b*(1-f.c);
-    q = [q[0]-k*f.n[0], q[1]-k*f.n[1]]; z += f.dir*b*f.s;
-  } else if (it.turn){
-    const t = it.turn, dx = q[0]-t.cx; q = [t.cx+dx*t.c, q[1]]; z += dx*t.s;
-  }
-  return [q[0], q[1], z];
-}
 
 /* =========================================================
    Paper shapes, labels and models
@@ -418,6 +410,54 @@ const LC = { A:'#ff5d8f', B:'#f5a400', C:'#17b8a6', D:'#7b61ff', E:'#2f7bff', F:
 const R2 = Math.SQRT2 - 1; // 0.41421…
 const PEN_Y = -1 + Math.sqrt(2 - 0.35*0.35); // penguin wing target height
 const labelsOf = m => Object.assign({}, SHAPES[m.shape].labels, m.labels || {});
+
+/* ---------- The traditional crane ----------
+   Diamond paper, centre O = (0,0). Quadrants name the four quarter-triangles of the paper
+   (LT = left-top, etc.) and are used to pick which layers a fold moves. */
+const CK = 1 - Math.SQRT1_2;          // 0.2929: height of the kite / petal crease
+const q4 = (...qs) => pc => qs.includes(quadOf(pc));
+const LEG_TO = 1 - Math.hypot(CK, 1-CK);   // where the leg edge lands on the middle line
+const TAIL_TIP = [0.62,-0.42], NECK_TIP = [-0.62,-0.42], HEAD_TIP = [-0.702,-0.206];
+const isLeg = pc => !has(pc,'S1') && !has(pc,'S2');
+const centroidX = pc => { const c = centroid(pc.poly); return ap(pc.M, c)[0]; };
+const CRANE_STEPS = [
+  { from:'A', to:'C', type:'valley', say:'Fold corner {A} down to corner {C} to make a big triangle.' },
+  { from:'D', to:'B', type:'valley', say:'Fold corner {D} across to corner {B}. Now it is a small triangle.' },
+  { kind:'Squash fold', say:'Squash fold: swing the top flap over to the {*}, then press its pocket open into a square.', subs:[
+    { from:[0.62,0.3], to:[-0.62,0.3], sel:q4('LB'), t0:0, t1:0.55 },
+    { from:[0.75,0.1], to:[0.1,0.75], sel:q4('LT'), tag:'S1', t0:0.45, t1:1 },
+    { from:[-0.75,0.1], to:[-0.1,0.75], sel:q4('LB'), tag:'S1', parent:0, t0:0.45, t1:1 } ] },
+  { turn:true, cx:0, say:'Turn the paper over.' },
+  { kind:'Squash fold', say:'Squash the other flap the same way: swing it to the {*} and press it flat. This square is the preliminary base.', subs:[
+    { from:[-0.62,0.3], to:[0.62,0.3], sel:q4('RB'), t0:0, t1:0.55 },
+    { from:[-0.75,0.1], to:[-0.1,0.75], sel:q4('RT'), tag:'S2', t0:0.45, t1:1 },
+    { from:[0.75,0.1], to:[0.1,0.75], sel:q4('RB'), tag:'S2', parent:0, t0:0.45, t1:1 } ] },
+  { from:[0.5,0.5], to:[0,CK], type:'valley', sel:q4('RB'), say:'Kite fold: bring the lower right edge of the top layer to the middle line, at the {*}.' },
+  { from:[-0.5,0.5], to:[0,CK], type:'valley', sel:q4('RT'), say:'Now bring the lower left edge to the middle line too.' },
+  { kind:'Petal fold', say:'Petal fold: lift the bottom point of the top layer all the way up to the {*}. The sides fold in.',
+    from:[0,1], to:[0,2*CK-1], type:'valley', sel: pc => has(pc,'S2') },
+  { turn:true, cx:0, say:'Turn the paper over.' },
+  { from:[0.5,0.5], to:[0,CK], type:'valley', sel:q4('LT'), say:'Kite fold the right edge to the middle line again.' },
+  { from:[-0.5,0.5], to:[0,CK], type:'valley', sel:q4('LB'), say:'And the left edge.' },
+  { kind:'Petal fold', say:'Petal fold this side too. You made a bird base!',
+    from:[0,1], to:[0,2*CK-1], type:'valley', sel: pc => has(pc,'S1') },
+  // narrow the legs: fold the lower edges (all front layers on that side) to the middle line
+  { from:[CK,CK], to:[0,LEG_TO], type:'valley', sel:q4('LT'), say:'Narrow the leg: fold the lower right edge to the middle line, at the {*}.' },
+  { from:[-CK,CK], to:[0,LEG_TO], type:'valley', sel:q4('LB'), say:'Fold the lower left edge to the middle line too.' },
+  { turn:true, cx:0, say:'Turn the paper over.' },
+  { from:[CK,CK], to:[0,LEG_TO], type:'valley', sel:q4('RB'), say:'Narrow this side as well: right edge to the middle.' },
+  { from:[-CK,CK], to:[0,LEG_TO], type:'valley', sel:q4('RT'), say:'And the left edge. Two skinny legs!' },
+  // inside reverse folds: the leg swings up and tucks between the front and back wing layers
+  { kind:'Inside reverse fold', say:'Inside reverse fold the right leg up between the wings, to the {*}. This is the tail.',
+    from:[0,1], to:TAIL_TIP, type:'valley', tag:'TAIL', place:{ above:q4('LT','LB') }, sel: pc => isLeg(pc) && centroidX(pc) > 0 },
+  { kind:'Inside reverse fold', say:'Inside reverse fold the left leg up to the {*}. This is the neck.',
+    from:[0,1], to:NECK_TIP, type:'valley', tag:'NECK', place:{ above:q4('LT','LB') }, sel: pc => isLeg(pc) && centroidX(pc) < 0 },
+  { kind:'Inside reverse fold', say:'Inside reverse fold the tip of the neck down to the {*} to make the head.',
+    from:NECK_TIP, to:HEAD_TIP, type:'valley', tag:'HEAD', place:{ above: pc => has(pc,'NECK') && ['LT','LB'].includes(quadOf(pc)) }, sel: pc => has(pc,'NECK') },
+  { kind:'Spread the wings', pose:true, say:'Fold both wings down so they stick out. Your crane is ready to fly!', subs:[
+    { from:[0,2*CK-1], to:[0,1], type:'valley', angle:Math.PI*0.5, sel: pc => has(pc,'S2') },
+    { from:[0,2*CK-1], to:[0,1], type:'mountain', angle:Math.PI*0.5, sel: pc => has(pc,'S1') } ] }
+];
 
 const MODELS = [
   { id:'puppy', name:'Puppy', emoji:'🐶', level:1, shape:'diamond', up:'#FFF1D6', down:'#C98A55', pat:'dots', bg:'#FFF2E0',
@@ -534,18 +574,13 @@ const MODELS = [
       { k:'blush', x:-0.2, y:-0.44, r:0.04 }, { k:'blush', x:0.2, y:-0.44, r:0.04 }
     ], ext:[[0,0.95]] },
 
-  { id:'crane', name:'Paper Crane', emoji:'🕊️', level:3, shape:'diamond', up:'#FFF4F0', down:'#E63950', pat:'stripes', bg:'#FFEDEF', isNew:true,
+  { id:'crane', name:'Paper Crane', emoji:'🕊️', level:3, shape:'diamond', up:'#E63950', down:'#FFF4F0', accent:'#E63950', pat:'', bg:'#FFEDEF', isNew:true,
     names:['Lucky Crane','Wish Bird','Sky Dancer','Senbazuru #1','Red Feather'],
-    fact:'Legend says folding 1,000 cranes grants a wish. This is a simplified crane made with straight folds. The traditional one adds squash, petal and reverse folds.',
-    steps:[
-      { from:'C', to:'A', type:'valley', say:'Fold corner {C} up to meet corner {A}. Corner {A} will be the wings.' },
-      { from:'D', to:[-0.6857,-0.706], type:'valley', say:'Fold corner {D} up to the {*} to make a long neck.' },
-      { from:'B', to:[0.6857,-0.706], type:'valley', say:'Fold corner {B} up to the {*} to make the tail.' },
-      { from:'D', to:[-0.73,-0.39], type:'valley', only:true, tag:'Neck only', say:'Fold the tip of the neck {D} down to the {*} to make the head.' }
-    ],
+    fact:'Legend says folding 1,000 cranes grants a wish. You just used the classic squash, petal and inside-reverse folds!',
+    steps: CRANE_STEPS,
     decor:[
-      { k:'eye', x:-0.62, y:-0.47, r:0.03 },
-      { k:'sparkle', x:0.55, y:-1.0, r:0.08 }, { k:'sparkle', x:-0.2, y:-1.12, r:0.06 }, { k:'sparkle', x:0.9, y:-0.3, r:0.06 }
+      { k:'eye', x:-0.575, y:-0.24, r:0.02 },
+      { k:'sparkle', x:0.85, y:-0.62, r:0.07 }, { k:'sparkle', x:-0.25, y:-0.62, r:0.06 }, { k:'sparkle', x:0.35, y:-0.75, r:0.05 }
     ], ext:[] },
 
   { id:'fox', name:'Fox', emoji:'🦊', level:3, shape:'diamond', up:'#FFFFFF', down:'#FF8A3D', pat:'dots', bg:'#FFF0E3',
@@ -587,58 +622,108 @@ const MODELS = [
    Folding engine
    piece = { poly:[orig coords], M:affine orig->current, g:group }
    ========================================================= */
-function initPieces(model){ return [{ poly:SHAPES[model.shape].poly.map(p=>p.slice()), M:ID.slice(), g:0 }]; }
+/* A step is one or more "sub-folds" that animate together. Each sub-fold reflects
+   a chosen set of pieces across a line; its 3D motion is a rotation about that line.
+   Several sub-folds can run at once (squash, petal and reverse folds). */
+const LAYER_KEY = 0.001;
+const has = (pc, t) => pc.tags && pc.tags.includes(t);
+const quadOf = pc => { const c = centroid(pc.poly); return (c[0] < 0 ? 'L' : 'R') + (c[1] < 0 ? 'T' : 'B'); };
+function initPieces(model){ return [{ poly:SHAPES[model.shape].poly.map(p=>p.slice()), M:ID.slice(), g:0, tags:[] }]; }
 function locate(pieces, o){
   for (let i=pieces.length-1;i>=0;i--) if (inside(pieces[i].poly, o, 1e-7)) return { i, pos:ap(pieces[i].M,o), g:pieces[i].g };
   return null;
 }
+function stepSubs(st){
+  if (st.subs) return st.subs;
+  if (st.turn) return [{ turn:true, cx:st.cx }];
+  return [st]; // a plain step is its own single sub-fold (from, to, type, sel, tag, place, ...)
+}
 function prepare(model, pieces, k){
-  const st = model.steps[k], L = labelsOf(model);
-  if (st.turn){
-    const bb = bboxPieces(pieces); const cx=(bb[0]+bb[2])/2;
-    return { turn:true, P:[cx,0], n:[1,0], cx, pieces };
+  const st = model.steps[k], L = labelsOf(model), subs = stepSubs(st);
+  let cur = pieces.map((pc,i) => ({ poly:pc.poly, M:pc.M, g:pc.g, tags:pc.tags||[], M0:pc.M, z0:i, seq:[] }));
+  const S = []; let primary = null;
+  const pos = v => typeof v === 'string' ? locate(cur, L[v]).pos : v;
+  subs.forEach((sb, j) => {
+    const t0 = sb.t0 !== undefined ? sb.t0 : 0, t1 = sb.t1 !== undefined ? sb.t1 : 1;
+    if (sb.turn){
+      let cx = sb.cx; if (cx === undefined){ const bb = bboxPieces(cur); cx = (bb[0]+bb[2])/2; }
+      const P = [cx,0], n = [1,0], R = nscale(P,n,-1);
+      cur = cur.slice().reverse().map(pc => Object.assign({}, pc, { M:mul(R,pc.M), seq:pc.seq.concat(j) }));
+      S.push({ P, n, dir:1, t0, t1, angle:Math.PI });
+      if (!primary) primary = { turn:true, cx, P, n };
+      return;
+    }
+    const from = pos(sb.from), to = pos(sb.to);
+    const P = [(from[0]+to[0])/2, (from[1]+to[1])/2], dx = from[0]-to[0], dy = from[1]-to[1], len = Math.hypot(dx,dy);
+    const n = [dx/len, dy/len];
+    let sel = () => true;
+    if (sb.only){ const g = locate(cur, L[sb.from]).g; sel = pc => pc.g === g; }
+    else if (sb.groups) sel = pc => sb.groups.includes(pc.g);
+    else if (sb.sel) sel = sb.sel;
+    const stays = [], moves = [];
+    for (const pc of cur){
+      if (!sel(pc)){ stays.push(pc); continue; }
+      const [s,m] = clip(pc.poly, pc.M, P, n);
+      if (Math.abs(area(s)) > 1e-7) stays.push(Object.assign({}, pc, { poly:s }));
+      if (Math.abs(area(m)) > 1e-7) moves.push(Object.assign({}, pc, { poly:m }));
+    }
+    const R = nscale(P,n,-1), dir = sb.type === 'mountain' ? -1 : 1;
+    const moved = moves.map(pc => Object.assign({}, pc, { M:mul(R,pc.M), g:k+1, tags: sb.tag ? pc.tags.concat(sb.tag) : pc.tags, seq:pc.seq.concat(j) }));
+    const place = sb.place || (dir < 0 ? 'bottom' : 'top');
+    if (place === 'top') cur = stays.concat(moved.reverse());
+    else if (place === 'bottom') cur = moved.reverse().concat(stays);
+    else { // tuck inside: keep their order, slot them just above the last matching piece
+      let idx = -1; stays.forEach((pc,i) => { if (place.above(pc)) idx = i; });
+      cur = stays.slice(0, idx+1).concat(moved, stays.slice(idx+1));
+    }
+    const sj = { P, n, dir, t0, t1, angle: sb.angle !== undefined ? sb.angle : Math.PI, parent: sb.parent };
+    if (sb.parent !== undefined){ // this hinge rides on the parent's flap: express it before the parent moves
+      const ps = S[sb.parent], Rp = nscale(ps.P, ps.n, -1);
+      sj.cP = ap(Rp, P); sj.cn = [Rp[0]*n[0]+Rp[2]*n[1], Rp[1]*n[0]+Rp[3]*n[1]];
+    }
+    S.push(sj);
+    if (!primary) primary = { turn:false, from, to, P, n, L:len, type: sb.type || 'valley', dir };
+  });
+  for (const pc of cur){
+    const ord = [];
+    for (const r of pc.seq){
+      const s = S[r]; if (s.parent !== undefined && pc.seq.includes(s.parent)) continue;
+      for (const c of pc.seq) if (S[c].parent === r) ord.push(c);
+      ord.push(r);
+    }
+    pc.ord = ord;
   }
-  const fr = locate(pieces, L[st.from]);
-  const to = typeof st.to === 'string' ? locate(pieces, L[st.to]).pos : st.to;
-  const from = fr.pos;
-  const P = [(from[0]+to[0])/2, (from[1]+to[1])/2];
-  const dx = from[0]-to[0], dy = from[1]-to[1], len = Math.hypot(dx,dy);
-  const n = [dx/len, dy/len];
-  const stays=[], moves=[];
-  for (const pc of pieces){
-    const ok = st.groups ? st.groups.includes(pc.g) : st.only ? pc.g === fr.g : true;
-    if (!ok){ stays.push(pc); continue; }
-    const [s,m] = clip(pc.poly, pc.M, P, n);
-    if (Math.abs(area(s)) > 1e-7) stays.push({ poly:s, M:pc.M, g:pc.g });
-    if (Math.abs(area(m)) > 1e-7) moves.push({ poly:m, M:pc.M, g:pc.g });
+  return Object.assign(primary, { subs:S, pieces:cur, multi: S.length > 1, pose: !!st.pose });
+}
+function commit(pr){ return pr.pieces.map(pc => ({ poly:pc.poly, M:pc.M, g:pc.g, tags:pc.tags })); }
+// 3D position of an original-paper point on piece pc, part-way (u = 0..1) through step pr.
+// Returns [x, y, z, k]: k is the layer-order key (stack offset, rotated with the flap).
+function animPos(pr, pc, p, u){
+  const q = ap(pc.M0, p); let x = q[0], y = q[1], z = 0, k = pc.z0*LAYER_KEY;
+  for (const j of pc.ord){
+    const s = pr.subs[j];
+    let f = clamp((u - s.t0)/(s.t1 - s.t0), 0, 1); if (pr.multi) f = easeIO(f);
+    const th = s.angle * f; if (th <= 0) continue;
+    const child = s.parent !== undefined && pc.seq.includes(s.parent);
+    const P = child ? s.cP : s.P, n = child ? s.cn : s.n, ph = (child ? -s.dir : s.dir) * th;
+    const d0 = -n[1], d1 = n[0], ex = x-P[0], ey = y-P[1];
+    const a = ex*d0 + ey*d1, b = ex*n[0] + ey*n[1], cs = Math.cos(ph), sn = Math.sin(ph);
+    const b2 = b*cs - z*sn; z = b*sn + z*cs; k *= cs;
+    x = P[0] + a*d0 + b2*n[0]; y = P[1] + a*d1 + b2*n[1];
   }
-  return { turn:false, from, to, P, n, L:len, type:st.type, dir: st.type==='mountain' ? -1 : 1, stays, moves, gNew:k+1 };
+  return [x, y, z, z + k];
 }
-function commit(pr){
-  const R = nscale(pr.P, pr.n, -1);
-  if (pr.turn) return pr.pieces.slice().reverse().map(pc=>({ poly:pc.poly, M:mul(R,pc.M), g:pc.g }));
-  const moved = pr.moves.slice().reverse().map(pc=>({ poly:pc.poly, M:mul(R,pc.M), g:pr.gNew }));
-  return pr.type === 'mountain' ? moved.concat(pr.stays) : pr.stays.concat(moved);
-}
-function listFor(pr, theta){
-  const c = Math.cos(theta), s = Math.sin(theta);
-  if (pr.turn){
-    const arr = pr.pieces.map(pc=>({ pc, T:pc.M, turn:{ cx:pr.cx, c, s } }));
-    if (c<0) arr.reverse(); return arr;
-  }
-  const f = { P:pr.P, n:pr.n, c, s, dir:pr.dir };
-  const mv = pr.moves.map(pc=>({ pc, T:pc.M, fold:f })); if (c<0) mv.reverse();
-  const st = pr.stays.map(pc=>({ pc, T:pc.M }));
-  return pr.type === 'mountain' ? mv.concat(st) : st.concat(mv);
-}
-const staticList = pieces => pieces.map(pc=>({ pc, T:pc.M }));
+const animItems = (pr, u) => pr.pieces.map(pc => ({ pc, pos: p => animPos(pr, pc, p, u) }));
+const staticItems = (pieces, lz) => pieces.map((pc,i) => ({ pc, pos: p => { const q = ap(pc.M,p); return [q[0], q[1], i*lz, i*(lz+LAYER_KEY)]; } }));
 const finalCache = {};
-function finalPieces(model){
+function finalState(model){
   if (finalCache[model.id]) return finalCache[model.id];
-  let p = initPieces(model);
-  for (let k=0;k<model.steps.length;k++) p = commit(prepare(model, p, k));
-  return (finalCache[model.id] = p);
+  let p = initPieces(model), pose = null;
+  model.steps.forEach((st,k) => { const pr = prepare(model, p, k); if (st.pose) pose = pr; else p = commit(pr); });
+  return (finalCache[model.id] = { pieces:p, pose });
 }
+function finalItems(model, lz){ const f = finalState(model); return f.pose ? animItems(f.pose, 1) : staticItems(f.pieces, lz); }
+function itemPts(items){ const out=[]; for (const it of items) for (const p of it.pc.poly) out.push(it.pos(p)); return out; }
 function decorPts(model){
   const pts = [];
   for (const d of model.decor){
@@ -649,7 +734,6 @@ function decorPts(model){
   }
   return pts.concat(model.ext);
 }
-function piecePts(pieces){ const out=[]; for (const pc of pieces) for (const p of pc.poly) out.push(ap(pc.M,p)); return out; }
 
 /* =========================================================
    Painting
@@ -675,14 +759,21 @@ function localAffine(v, fn, ox, oy){
 }
 function renderModel(c, v, dpr, model, items, o){
   const front = Math.cos(v.yaw)*Math.cos(v.pitch) >= 0;
-  const lift = o.lift || 0;
-  items.forEach((it,i) => { it.z = i*LZ*lift; });
-  const topZ = Math.max(0,items.length-1)*LZ*lift + 0.012;
+  let topZ = 0;
+  items.forEach((it,i) => {
+    const w3 = it.pc.poly.map(it.pos); let zs = 0, ks = 0;
+    for (const q of w3){ zs += q[2]; ks += q[3]; }
+    it.zc = zs/w3.length; if (it.zc > topZ) topZ = it.zc;
+    it.sp = w3.map(q => proj(v, q)); it.i = i;
+    if (o.sort === 'view'){ let f = 0; for (const q of it.sp) f += q[2]; it.key = f/it.sp.length + ks/w3.length*0.02; }
+    else it.key = front ? ks/w3.length : -ks/w3.length;
+  });
+  const order = items.slice().sort((a,b) => (a.key - b.key) || (front ? a.i - b.i : b.i - a.i));
+  topZ += 0.012;
   c.setTransform(dpr,0,0,dpr,0,0);
   if (o.decor && front) drawDecor3(c, v, dpr, model, true, o.decorT, -0.012);
-  const order = front ? items : items.slice().reverse();
   for (const it of order){
-    const sp = it.pc.poly.map(p => proj(v, world3(it,p))); it.sp = sp;
+    const sp = it.sp;
     const ao = area(it.pc.poly), as = area(sp);
     const up = (ao > 0) === (as > 0);
     const nz = clamp(Math.abs(as) / (Math.abs(ao)*Math.pow(v.s*sp[0][2],2) + 1e-9), 0, 1);
@@ -694,7 +785,7 @@ function renderModel(c, v, dpr, model, items, o){
     c.restore();
     if (o.pat && !up && nz > 0.15){
       const ctr = centroid(it.pc.poly);
-      const A = localAffine(v, (x,y)=>proj(v, world3(it,[x,y])), ctr[0], ctr[1]);
+      const A = localAffine(v, (x,y)=>proj(v, it.pos([x,y])), ctr[0], ctr[1]);
       c.save(); c.clip();
       c.setTransform(dpr*A[0],dpr*A[1],dpr*A[2],dpr*A[3],dpr*A[4],dpr*A[5]);
       c.fillStyle = o.pat; c.fillRect(ctr[0]-3, ctr[1]-3, 6, 6);
@@ -705,7 +796,7 @@ function renderModel(c, v, dpr, model, items, o){
     c.lineJoin='round'; c.lineWidth=1.3; c.strokeStyle='rgba(45,35,90,0.3)'; c.stroke();
   }
   if (o.decor){
-    if (front) drawDecor3(c, v, dpr, model, false, o.decorT, topZ);
+    if (front) drawDecor3(c, v, dpr, model, false, o.decorT, o.decorZ !== undefined ? o.decorZ : topZ);
     else drawDecor3(c, v, dpr, model, true, o.decorT, -0.012);
   }
   c.setTransform(dpr,0,0,dpr,0,0);
@@ -747,14 +838,16 @@ function drawDecor3(c, v, dpr, model, behind, t, z){
   });
 }
 function radiusFit(pts, cx, cy){ let r=0.3; for (const p of pts) r = Math.max(r, Math.hypot(p[0]-cx, p[1]-cy)); return r; }
-function drawStatic(canvas, model, pieces){
+function drawStatic(canvas, model){
   const ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
   ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,W,H);
   ctx.fillStyle = model.bg; ctx.fillRect(0,0,W,H);
-  const pts = piecePts(pieces).concat(decorPts(model)), bb = bboxPts(pts);
+  const items = finalItems(model, LZ), pose = !!finalState(model).pose;
+  const pts = itemPts(items).concat(decorPts(model)), bb = bboxPts(pts);
   const cx=(bb[0]+bb[2])/2, cy=(bb[1]+bb[3])/2, R = radiusFit(pts, cx, cy);
-  const v = { cx, cy, s: W*0.43/R, yaw:-0.38, pitch:0.36, ox:0, oy:0, W, H };
-  renderModel(ctx, v, 1, model, staticList(pieces), { lift:1, decor:true, pat:makePattern(ctx, model) });
+  const v = pose ? { cx, cy, s: W*0.46/R, yaw:-0.75, pitch:0.85, ox:0, oy:0, W, H }
+                 : { cx, cy, s: W*0.43/R, yaw:-0.38, pitch:0.36, ox:0, oy:0, W, H };
+  renderModel(ctx, v, 1, model, items, { decor:true, pat:makePattern(ctx, model), sort: pose ? 'view' : 'z', decorZ: pose ? 0.01 : undefined });
 }
 
 /* =========================================================
@@ -781,7 +874,7 @@ let VT = { cx:0, cy:0, s:100, pitch:0, ox:0, oy:0 };
 
 function startModel(i){
   G.mi = i; G.model = MODELS[i]; G.pieces = initPieces(G.model);
-  G.step=0; G.hist=[]; G.mistakes=0; G.hints=0; G.done=false; G.entry=null;
+  G.step=0; G.hist=[]; G.mistakes=0; G.hints=0; G.done=false; G.entry=null; G.pose=null;
   G.theta=0; G.anim=null; G.drag=null; G.orbit=null; G.startT=Date.now();
   G.pat = makePattern(ctx, G.model);
   V.yaw = 0;
@@ -804,23 +897,18 @@ function prepareCurrent(snap){
 function fitCurrent(snap){
   const pad = clamp(Math.min(W,H)*0.12, 34, 76), pb = G.done ? pad + 74 : pad;
   if (G.done){
-    const pts = piecePts(G.pieces).concat(decorPts(G.model)), bb = bboxPts(pts);
+    const pts = itemPts(doneItems(1)).concat(decorPts(G.model)), bb = bboxPts(pts);
     const cx=(bb[0]+bb[2])/2, cy=(bb[1]+bb[3])/2;
     // the model is nearly flat, so spinning only shrinks it; leave a little room for perspective
     const hw = (bb[2]-bb[0])/2*1.12 + 0.05, hh = (bb[3]-bb[1])/2*1.12 + 0.05;
     G.R = hh; G.fitBB = bb;
-    VT = { cx, cy, s: Math.max(10, Math.min((W-2*pad)/(2*hw), (H-pad-pb)/(2*hh), (Math.min(W,H)-2*pad)/2*1.6)), pitch:0.3, ox:0, oy:-(pb-pad)/2 };
+    VT = { cx, cy, s: Math.max(10, Math.min((W-2*pad)/(2*hw), (H-pad-pb)/(2*hh), (Math.min(W,H)-2*pad)/2*1.6)), pitch: G.pose ? 0.8 : 0.3, ox:0, oy:-(pb-pad)/2 };
   } else {
-    const pts3 = [];
-    for (const p of piecePts(G.pieces)) pts3.push([p[0],p[1],0]);
-    if (G.next) for (const p of piecePts(G.next)) pts3.push([p[0],p[1],0]);
+    const pts3 = itemPts(staticItems(G.pieces, 0));
     const pr = G.prep;
-    if (pr && !pr.turn){
-      pts3.push([pr.to[0],pr.to[1],0]);
-      const f = { P:pr.P, n:pr.n, c:0, s:1, dir:pr.dir };
-      for (const pc of pr.moves) for (const p of pc.poly) pts3.push(world3({ T:pc.M, fold:f }, p));
-    } else if (pr && pr.turn){
-      for (const p of piecePts(G.pieces)) pts3.push([pr.cx, p[1], p[0]-pr.cx]);
+    if (pr){
+      for (const u of [0.25, 0.5, 0.75, 1]) pts3.push(...itemPts(animItems(pr, u)));
+      if (!pr.turn) pts3.push([pr.to[0], pr.to[1], 0]);
     }
     const bb = bboxPts(pts3); G.fitBB = bboxPieces(G.pieces);
     const cx=(bb[0]+bb[2])/2, cy=(bb[1]+bb[3])/2, pitch = store.view3d ? PITCH : 0;
@@ -838,8 +926,12 @@ const w2s = w => proj(V, [w[0], w[1], 0]);
 
 function animTo(b, dur, cb){ G.anim = { a:G.theta, b, t0:performance.now(), dur:Math.max(60,dur), cb }; }
 function autoFold(){ if (G.anim || !G.prep) return; SND.swoosh(0.6); animTo(Math.PI, 900, completeStep); }
+// what the finished model looks like: a 3D pose step stays "open", flat models get layer lift
+function doneItems(lift){ return G.pose ? animItems(G.pose, 1) : staticItems(G.pieces, LZ*lift); }
 function completeStep(){
-  G.hist.push(G.pieces); G.pieces = G.next; G.step++; G.theta = 0;
+  G.hist.push(G.pieces);
+  if (G.prep.pose) G.pose = G.prep; else G.pieces = G.next;
+  G.step++; G.theta = 0;
   SND.crease();
   if (G.step >= G.model.steps.length){ finish(); }
   else { prepareCurrent(false); updatePanel(); }
@@ -850,7 +942,7 @@ function undo(){
     G.done = false; G.orbit = null;
     if (G.entry){ store.shelf = store.shelf.filter(e=>e.id!==G.entry.id); G.entry=null; save(); }
   }
-  G.pieces = G.hist.pop(); G.step--; SND.pop();
+  G.pieces = G.hist.pop(); G.step--; G.pose = null; SND.pop();
   prepareCurrent(false); updatePanel();
 }
 function finish(){
@@ -881,7 +973,9 @@ const ICON_VALLEY = '<svg width="26" height="10"><line x1="2" y1="5" x2="24" y2=
 const ICON_MTN = '<svg width="26" height="10"><line x1="2" y1="5" x2="24" y2="5" stroke="#fff" stroke-width="2.5" stroke-dasharray="7 3 1.5 3" stroke-linecap="round"/></svg>';
 function updatePanel(){
   const m = G.model, n = m.steps.length;
-  $('pDots').innerHTML = m.steps.map((_,i)=>`<i class="${i<G.step?'done':i===G.step&&!G.done?'cur':''}"></i>`).join('');
+  $('pDots').innerHTML = n > 8
+    ? `<span class="pbar"><b style="width:${Math.round((G.done ? n : G.step)/n*100)}%"></b></span>`
+    : m.steps.map((_,i)=>`<i class="${i<G.step?'done':i===G.step&&!G.done?'cur':''}"></i>`).join('');
   $('stepView').hidden = G.done; $('doneView').hidden = !G.done;
   if (G.done){
     $('doneTitle').textContent = `Ta-da! You folded a ${m.name}!`;
@@ -900,6 +994,7 @@ function updatePanel(){
   $('stepNo').textContent = `Step ${G.step+1} of ${n}`;
   const ty = $('stepType');
   if (st.turn){ ty.className='chip-type turn'; ty.innerHTML='🔄 Turn over'; }
+  else if (st.kind){ ty.className='chip-type special'; ty.textContent='✨ ' + st.kind; }
   else if (st.type==='mountain'){ ty.className='chip-type mountain'; ty.innerHTML=ICON_MTN+' Mountain fold'; }
   else { ty.className='chip-type'; ty.innerHTML=ICON_VALLEY+' Valley fold'; }
   const tg = $('stepTop'); tg.hidden = !(st.only || st.tag); tg.textContent = st.tag || 'Top layer only';
@@ -927,7 +1022,7 @@ function computeGroups(items){
     const o = L[name]; let idx=-1;
     for (let i=items.length-1;i>=0;i--) if (inside(items[i].pc.poly,o,1e-7)){ idx=i; break; }
     if (idx<0) continue;
-    const s = proj(V, world3(items[idx], o)); let occ=false;
+    const s = proj(V, items[idx].pos(o)); let occ=false;
     for (let j=idx+1;j<items.length;j++) if (insideStrict(items[j].sp, s, 0.6)){ occ=true; break; }
     out.push({ name, s, occ });
   }
@@ -940,7 +1035,7 @@ function computeGroups(items){
   return groups;
 }
 function drawBadges(c, groups, now, center){
-  const st = G.prep && !G.prep.turn ? G.model.steps[G.step] : null;
+  const st = G.prep && !G.prep.turn ? stepSubs(G.model.steps[G.step])[0] : null;
   const show = G.mode==='guided' || G.reveal;
   for (const g of groups){
     const isFrom = st && g.items.some(i=>i.name===st.from) && !G.drag && !G.anim;
@@ -983,8 +1078,15 @@ function arrowPath(fs, ts){
   return { ctrl, at:t=>[ (1-t)*(1-t)*fs[0]+2*(1-t)*t*ctrl[0]+t*t*ts[0], (1-t)*(1-t)*fs[1]+2*(1-t)*t*ctrl[1]+t*t*ts[1] ] };
 }
 function drawGuides(c, now){
-  const pr = G.prep, st = G.model.steps[G.step];
+  const pr = G.prep, st = stepSubs(G.model.steps[G.step])[0];
   const show = G.mode==='guided' || G.reveal;
+  if (!pr.turn && typeof st.from !== 'string' && !G.drag && !G.anim && G.theta < 0.05){
+    // grab handle for points that have no letter label
+    const h = w2s(pr.from), r = 13 + Math.sin(now/220)*3;
+    c.save(); c.beginPath(); c.arc(h[0],h[1],r+5,0,Math.PI*2); c.fillStyle='rgba(255,210,63,0.35)'; c.fill();
+    c.beginPath(); c.arc(h[0],h[1],9,0,Math.PI*2); c.fillStyle='#fff'; c.fill();
+    c.lineWidth=3; c.strokeStyle='#ffb000'; c.stroke(); c.restore();
+  }
   if (pr.turn){
     if (!show || G.theta>0.05) return;
     const bb = G.fitBB, top = w2s([(bb[0]+bb[2])/2, bb[1]]), cx = top[0], cy = Math.max(24, top[1]-40);
@@ -997,7 +1099,8 @@ function drawGuides(c, now){
   }
   const col = pr.type==='mountain' ? '#ff4d6d' : '#2f7bff';
   const fs = w2s(pr.from), ts = w2s(pr.to);
-  if (Array.isArray(st.to)) drawStar(c, ts, now);
+  if (pr.pose) { /* a pose only opens part-way: no target star */ }
+  else if (Array.isArray(st.to)) drawStar(c, ts, now);
   else if (show){
     c.save(); c.setLineDash([5,5]); c.lineWidth=3; c.strokeStyle=col; c.beginPath(); c.arc(ts[0],ts[1],20,0,Math.PI*2); c.stroke(); c.restore();
   }
@@ -1088,11 +1191,12 @@ function draw(now){
   V.W = W; V.H = H; const ox = V.ox; V.ox += sx;
   // only split pieces while a fold is moving, so the crease isn't given away beforehand
   const moving = G.prep && (G.theta > 1e-4 || G.anim || G.drag);
-  const items = moving ? listFor(G.prep, G.theta) : staticList(G.pieces);
   const t = now - G.doneAt, lift = G.done ? easeOut(clamp(t/900,0,1)) : 0;
+  const items = G.done ? doneItems(lift) : moving ? animItems(G.prep, G.theta/Math.PI) : staticItems(G.pieces, 0);
   ctx.setTransform(DPR,0,0,DPR,0,0);
   if (G.done) drawShadow(ctx);
-  renderModel(ctx, V, DPR, G.model, items, { lift, decor:G.done, decorT:t, pat:G.pat });
+  renderModel(ctx, V, DPR, G.model, items, { decor:G.done, decorT:t, pat:G.pat,
+    sort: G.done && G.pose ? 'view' : 'z', decorZ: G.done && G.pose ? 0.01 : undefined });
   G.items = items;
   if (!G.done){
     if (G.prep) drawGuides(ctx, now);
@@ -1120,7 +1224,8 @@ function frame(now){
   if (G.done){
     if (!G.orbit){
       const t = (now - G.doneAt)/1000;
-      const sway = t < 1.2 ? 0 : Math.sin((t-1.2)*0.9)*0.75;
+      const base = G.pose ? -0.7 : 0; // 3D-posed models look best from a three-quarter angle
+      const sway = base + (t < 1.2 ? 0 : Math.sin((t-1.2)*0.9)*(G.pose ? 0.5 : 0.75));
       V.yaw += (sway - V.yaw)*(1-Math.exp(-dt*1.5));
       V.pitch += (VT.pitch - V.pitch)*(1-Math.exp(-dt*2));
     }
@@ -1139,7 +1244,7 @@ function frame(now){
    ========================================================= */
 function localPt(e){ const r = cv.getBoundingClientRect(); return [e.clientX-r.left, e.clientY-r.top]; }
 function onMovingSide(sp){
-  return G.prep.moves.some(pc => inside(pc.poly.map(p => { const q=ap(pc.M,p); return proj(V,[q[0],q[1],0]); }), sp, 1e-6));
+  return G.prep.pieces.some(pc => pc.seq.length && inside(pc.poly.map(p => { const q=ap(pc.M0,p); return proj(V,[q[0],q[1],0]); }), sp, 1e-6));
 }
 function hitGroup(sp){
   let best=null, bd=34;
@@ -1157,18 +1262,19 @@ cv.addEventListener('pointerdown', e => {
     cv.setPointerCapture(e.pointerId); cv.classList.add('grabbing'); return;
   }
   if (!G.prep) return;
-  const pr = G.prep, st = G.model.steps[G.step];
+  const pr = G.prep, st = stepSubs(G.model.steps[G.step])[0];
   if (pr.turn){ G.drag = { id:e.pointerId, start:sp, turn:true, moved:false }; cv.setPointerCapture(e.pointerId); return; }
   const fs = w2s(pr.from), ts = w2s(pr.to), dist = Math.hypot(sp[0]-fs[0], sp[1]-fs[1]);
+  const what = typeof st.from === 'string' ? `point ${st.from}` : 'the glowing handle';
   let ok = false;
   if (G.mode==='guided'){
     ok = dist < 72 || onMovingSide(sp);
-    if (!ok){ toast(`Grab point ${st.from}. It is glowing!`); G.ghostUntil = performance.now()+3400; G.stepStart = performance.now()-2300; return; }
+    if (!ok){ toast(`Grab ${what}!`); G.ghostUntil = performance.now()+3400; G.stepStart = performance.now()-2300; return; }
   } else {
     const g = hitGroup(sp);
     if (dist < 34 || (g && g.items.some(i=>i.name===st.from))) ok = true;
-    else if (g){ const names = g.items.map(i=>i.name).join(' & '); mistake(`That is ${names}. Find point ${st.from}!`); return; }
-    else { toast(`Grab point ${st.from} to fold.`); return; }
+    else if (g){ const names = g.items.map(i=>i.name).join(' & '); mistake(`That is ${names}. Find ${what}!`); return; }
+    else { toast(`Grab ${what} to fold.`); return; }
   }
   G.drag = { id:e.pointerId, start:sp, fs, ts, moved:false };
   cv.setPointerCapture(e.pointerId); cv.classList.add('grabbing');
@@ -1192,7 +1298,8 @@ cv.addEventListener('pointermove', e => {
 function release(e, cancelled){
   if (G.orbit && e.pointerId === G.orbit.id){
     G.orbit = null; cv.classList.remove('grabbing');
-    G.doneAt = performance.now() - 1200 - (Math.asin(clamp(V.yaw/0.75,-1,1))/0.9)*1000; // resume sway smoothly
+    const base = G.pose ? -0.7 : 0, amp = G.pose ? 0.5 : 0.75; // resume the sway from where the user left it
+    G.doneAt = performance.now() - 1200 - (Math.asin(clamp((V.yaw-base)/amp,-1,1))/0.9)*1000;
     return;
   }
   const d = G.drag; if (!d || e.pointerId !== d.id) return;
@@ -1253,7 +1360,7 @@ function renderHome(){
   const grid = $('grid'); grid.innerHTML = '';
   MODELS.forEach((m,i) => {
     if (store.lv && m.level !== store.lv) return;
-    const b = document.createElement('button'); b.className='mcard'; b.style.setProperty('--c', m.down);
+    const b = document.createElement('button'); b.className='mcard'; b.style.setProperty('--c', m.accent || m.down);
     const best = store.best[m.id+':'+G.mode] || 0;
     const lvlName = ['','Easy','Medium','Tricky'][m.level];
     b.innerHTML = `<canvas width="300" height="300"></canvas>${m.isNew && !best ? '<span class="new">NEW</span>' : ''}<div class="mc-name">${m.emoji} ${esc(m.name)}</div>
@@ -1261,7 +1368,7 @@ function renderHome(){
     b.setAttribute('aria-label', `${m.name}, ${lvlName}, ${m.steps.length} steps, best ${best} stars`);
     b.onclick = () => { SND.pop(); startModel(i); };
     grid.appendChild(b);
-    drawStatic(b.querySelector('canvas'), m, finalPieces(m));
+    drawStatic(b.querySelector('canvas'), m);
   });
   const shelf = $('shelf'); shelf.innerHTML = '';
   const items = store.shelf.filter(e => MODELS.some(m=>m.id===e.m));
@@ -1273,7 +1380,7 @@ function renderHome(){
     const d = document.createElement('div'); d.className='item';
     d.innerHTML = `<canvas width="220" height="220"></canvas><div class="nm" title="${esc(e.name)}">${esc(e.name)}</div><div class="st"><span class="stars-s">${starStr(e.stars||0)}</span> · ${e.mode==='expert'?'Expert':'Guided'}</div>`;
     shelf.appendChild(d);
-    drawStatic(d.querySelector('canvas'), m, finalPieces(m));
+    drawStatic(d.querySelector('canvas'), m);
   });
 }
 $('btnClear').onclick = () => { if (confirm('Clear all creations from your shelf?')){ store.shelf = []; save(); renderHome(); } };
